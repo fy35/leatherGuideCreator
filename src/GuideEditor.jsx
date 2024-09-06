@@ -52,8 +52,11 @@ const styles = StyleSheet.create({
     maxWidth: "100%",
     height: 200,
     objectFit: "contain",
-    fontFamily: "Noto Sans",
     marginBottom: 10,
+    padding: 10,
+  },
+  section: {
+    margin: 10,
     padding: 10,
   },
   title: {
@@ -65,17 +68,14 @@ const styles = StyleSheet.create({
   partContainer: {
     flexDirection: "row",
     flexWrap: "wrap",
-    fontFamily: "Noto Sans",
     justifyContent: "space-around",
   },
   part: {
     width: "22%",
-    fontFamily: "Noto Sans",
     marginBottom: 20,
   },
   partImage: {
     width: "100%",
-    fontFamily: "Noto Sans",
     height: 100,
     objectFit: "contain",
   },
@@ -94,73 +94,97 @@ const styles = StyleSheet.create({
   stepContent: {
     flexDirection: "row",
     justifyContent: "space-between",
-    fontFamily: "Noto Sans",
   },
   stepText: {
     width: "60%",
-    fontFamily: "Noto Sans",
   },
   stepNumber: {
     fontSize: 16,
     fontWeight: "bold",
-    fontFamily: "Noto Sans",
     marginBottom: 5,
   },
   stepDescription: {
     fontSize: 12,
-    fontFamily: "Noto Sans",
   },
   stepImage: {
     width: "100%",
-    fontFamily: "Noto Sans",
     height: 150,
     objectFit: "contain",
   },
 });
 
-const PDFDocument = ({ guide }) => (
+const fetchImageAsBase64 = async (url) => {
+  try {
+    const response = await axios.get("/.netlify/functions/getImage", {
+      params: { url },
+    });
+    return `data:${response.data.contentType};base64,${response.data.base64}`;
+  } catch (error) {
+    console.error("Error fetching image:", error);
+    return null;
+  }
+};
+
+const PDFDocument = ({ guide, images }) => (
   <Document>
     {/* Ürün Kodu Sayfası */}
     <Page size="A4" style={styles.page}>
-      <View style={styles.section}>
-        <Text style={styles.title}>Ürün Rehberi</Text>
+      <View style={styles.productCodePage}>
         <Text style={styles.productCode}>{guide.productCode}</Text>
+        <View style={styles.productPhotosContainer}>
+          {images.productPhotos.map((photo, index) => (
+            <Image key={index} src={photo} style={styles.productPhoto} />
+          ))}
+        </View>
       </View>
     </Page>
 
-    {/* Ürün Parçaları Sayfası */}
+    {/* Parçalar Sayfası */}
     <Page size="A4" style={styles.page}>
-      <View style={styles.section}>
-        <Text style={styles.title}>Ürün Parçaları</Text>
+      <Text style={styles.title}>1. Parçalar</Text>
+      <View style={styles.partContainer}>
         {guide.partImages.map((part, index) => (
-          <Text key={index} style={styles.partDescription}>
-            {index + 1}. {part.description || "Parça açıklaması yok"}
-          </Text>
+          <View key={index} style={styles.part}>
+            <Image src={images.partImages[index]} style={styles.partImage} />
+            <Text style={styles.partDescription}>
+              {part.description || "Parça İsmi Yok"}
+            </Text>
+          </View>
         ))}
       </View>
     </Page>
 
-    {/* Ürün Adımları Sayfası */}
+    {/* Üretim Adımları Sayfası */}
     <Page size="A4" style={styles.page}>
-      <View style={styles.section}>
-        <Text style={styles.title}>Üretim Adımları</Text>
-        {guide.steps.map((step, index) => (
-          <Text key={index} style={styles.stepDescription}>
-            {index + 1}. Adım: {step.description}
-          </Text>
-        ))}
-      </View>
+      <Text style={styles.title}>Üretim Adımları</Text>
+      {guide.steps.map((step, index) => (
+        <View key={index} style={styles.stepContainer} wrap={false}>
+          <View style={styles.stepContent}>
+            <View style={styles.stepText}>
+              <Text style={styles.stepNumber}>{index + 1}. Adım</Text>
+              <Text style={styles.stepDescription}>{step.description}</Text>
+            </View>
+            <Image src={images.steps[index]} style={styles.stepImage} />
+          </View>
+        </View>
+      ))}
     </Page>
   </Document>
 );
 
 const GuideEditor = () => {
   const [guide, setGuide] = useState(null);
+  const [images, setImages] = useState({
+    productPhotos: [],
+    partImages: [],
+    steps: [],
+  });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [isPDFVisible, setIsPDFVisible] = useState(false);
   const { guideId } = useParams();
   const navigate = useNavigate();
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
 
   useEffect(() => {
     const fetchGuide = async () => {
@@ -169,7 +193,9 @@ const GuideEditor = () => {
         const guideSnap = await getDoc(guideRef);
 
         if (guideSnap.exists()) {
-          setGuide({ id: guideSnap.id, ...guideSnap.data() });
+          const guideData = { id: guideSnap.id, ...guideSnap.data() };
+          setGuide(guideData);
+          await fetchImages(guideData);
         } else {
           setError("Rehber bulunamadı.");
         }
@@ -183,9 +209,29 @@ const GuideEditor = () => {
     fetchGuide();
   }, [guideId]);
 
+  const fetchImages = async (guideData) => {
+    try {
+      const productPhotos = await Promise.all(
+        guideData.productPhotos.map(fetchImageAsBase64)
+      );
+      const partImages = await Promise.all(
+        guideData.partImages.map((part) => fetchImageAsBase64(part.url))
+      );
+      const steps = await Promise.all(
+        guideData.steps.map((step) => fetchImageAsBase64(step.image))
+      );
+
+      setImages({ productPhotos, partImages, steps });
+    } catch (error) {
+      console.error("Error fetching images:", error);
+      setError("Resimler yüklenirken bir hata oluştu.");
+    }
+  };
+
   const handleInputChange = (e) => {
     const { name, value } = e.target;
     setGuide((prev) => ({ ...prev, [name]: value }));
+    setHasUnsavedChanges(true);
   };
 
   const handleStepChange = (index, field, value) => {
@@ -194,6 +240,8 @@ const GuideEditor = () => {
       newSteps[index] = { ...newSteps[index], [field]: value };
       return { ...prev, steps: newSteps };
     });
+
+    setHasUnsavedChanges(true);
   };
 
   const handleDeletePhoto = async (type, index) => {
@@ -232,6 +280,8 @@ const GuideEditor = () => {
       }
       return prev;
     });
+
+    setHasUnsavedChanges(true);
   };
 
   const handleChangePhoto = async (type, index, e) => {
@@ -291,6 +341,27 @@ const GuideEditor = () => {
       }
       return prev;
     });
+
+    setHasUnsavedChanges(true);
+  };
+
+  const fetchGuideData = async () => {
+    try {
+      const guideRef = doc(db, "guides", guideId);
+      const guideSnap = await getDoc(guideRef);
+
+      if (guideSnap.exists()) {
+        const guideData = { id: guideSnap.id, ...guideSnap.data() };
+        setGuide(guideData);
+        await fetchImages(guideData);
+      } else {
+        setError("Rehber bulunamadı.");
+      }
+    } catch (err) {
+      setError("Rehber yüklenirken bir hata oluştu.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleSubmit = async (e) => {
@@ -306,7 +377,8 @@ const GuideEditor = () => {
         steps: guide.steps,
       });
       alert("Rehber başarıyla güncellendi!");
-      navigate("/");
+      setHasUnsavedChanges(false);
+      await fetchGuideData();
     } catch (error) {
       console.error("Rehber güncellenirken hata oluştu:", error);
       alert("Rehber güncellenirken bir hata oluştu.");
@@ -353,6 +425,7 @@ const GuideEditor = () => {
       }
       return prev;
     });
+    setHasUnsavedChanges(true);
   };
 
   const handleAddStep = async (e) => {
@@ -365,16 +438,24 @@ const GuideEditor = () => {
       newStepIndex + 1
     }`;
 
-    // Upload new photo
-    const newPhotoRef = ref(storage, newPhotoPath);
-    await uploadBytes(newPhotoRef, file);
-    const downloadURL = await getDownloadURL(newPhotoRef);
+    try {
+      // Upload new photo
+      const newPhotoRef = ref(storage, newPhotoPath);
+      await uploadBytes(newPhotoRef, file);
+      const downloadURL = await getDownloadURL(newPhotoRef);
 
-    // Update guide state
-    setGuide((prev) => ({
-      ...prev,
-      steps: [...prev.steps, { image: downloadURL, description: "" }],
-    }));
+      // Update guide state
+      setGuide((prev) => ({
+        ...prev,
+        steps: [...prev.steps, { image: downloadURL, description: "" }],
+      }));
+
+      console.log("Step added successfully");
+    } catch (error) {
+      console.error("Error adding step:", error);
+      alert("Adım eklenirken bir hata oluştu. Lütfen tekrar deneyin.");
+    }
+    setHasUnsavedChanges(true);
   };
 
   const handlePartDescriptionChange = (index, newDescription) => {
@@ -386,10 +467,16 @@ const GuideEditor = () => {
       };
       return { ...prev, partImages: newPartImages };
     });
+    setHasUnsavedChanges(true);
   };
 
-  const handleCreatePDF = () => {
-    setIsPDFVisible(true);
+  const handleCreatePDF = (e) => {
+    e.preventDefault();
+    if (hasUnsavedChanges) {
+      alert("Lütfen önce değişiklikleri kaydedin, sonra PDF oluşturun.");
+    } else {
+      setIsPDFVisible(true);
+    }
   };
 
   if (loading) return <div className="text-center mt-10">Yükleniyor...</div>;
@@ -398,8 +485,272 @@ const GuideEditor = () => {
   if (!guide) return null;
 
   return (
-    <div className="container mx-auto mt-10 p-4">
+    <div className="container mx-auto p-4 bg-gray-100">
+      <h1 className="text-4xl font-bold text-center mb-8 text-gray-800">
+        Rehber Düzenle
+      </h1>
+
+      <div className="bg-white shadow-lg rounded-lg px-8 pt-6 pb-8 mb-4">
+        <form onSubmit={handleSubmit} className="max-w-4xl mx-auto">
+          <div className="mb-6">
+            <label
+              htmlFor="productCode"
+              className="block text-gray-700 text-lg font-bold mb-2"
+            >
+              Ürün Kodu
+            </label>
+            <input
+              type="text"
+              id="productCode"
+              name="productCode"
+              value={guide.productCode}
+              onChange={handleInputChange}
+              className="shadow-sm appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          <div className="mb-8">
+            <h2 className="text-2xl font-bold mb-4 text-gray-800">
+              Ürün Fotoğrafları (Maksimum 3)
+            </h2>
+            <div className="flex flex-wrap -mx-2">
+              {guide.productPhotos &&
+                guide.productPhotos.slice(0, 3).map((photo, index) => (
+                  <div key={index} className="w-1/3 px-2 mb-4">
+                    <div className="relative bg-gray-200 rounded-lg p-2">
+                      <img
+                        src={photo}
+                        alt={`Ürün ${index + 1}`}
+                        className="w-full h-40 object-cover rounded"
+                      />
+                      <input
+                        type="file"
+                        onChange={(e) => handleChangePhoto("product", index, e)}
+                        className="mt-2 w-full text-sm"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleDeletePhoto("product", index)}
+                        className="absolute top-1 right-1 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center hover:bg-red-600 transition duration-200"
+                      >
+                        X
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              {guide.productPhotos && guide.productPhotos.length < 3 && (
+                <div className="w-1/3 px-2 mb-4">
+                  <div className="bg-gray-200 rounded-lg p-2 h-full flex flex-col justify-center items-center">
+                    <input
+                      type="file"
+                      onChange={(e) => handleAddPhoto("product", e)}
+                      className="hidden"
+                      id="addProductPhoto"
+                    />
+                    <label
+                      htmlFor="addProductPhoto"
+                      className="cursor-pointer text-center"
+                    >
+                      <svg
+                        className="mx-auto h-12 w-12 text-gray-400"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth="2"
+                          d="M12 6v6m0 0v6m0-6h6m-6 0H6"
+                        />
+                      </svg>
+                      <span className="mt-2 block text-sm font-medium text-gray-700">
+                        Yeni ürün fotoğrafı ekle
+                      </span>
+                    </label>
+                  </div>
+                </div>
+              )}
+            </div>
+            {guide.productPhotos && guide.productPhotos.length >= 3 && (
+              <p className="text-sm text-red-500 mt-2">
+                Maksimum fotoğraf sayısına ulaşıldı (3).
+              </p>
+            )}
+          </div>
+
+          <div className="mb-8">
+            <h2 className="text-2xl font-bold mb-4 text-gray-800">
+              Parça Resimleri
+            </h2>
+            <div className="flex flex-wrap -mx-2">
+              {guide.partImages &&
+                guide.partImages.map((part, index) => (
+                  <div key={index} className="w-1/3 px-2 mb-4">
+                    <div className="relative bg-gray-200 rounded-lg p-2">
+                      <img
+                        src={part.url}
+                        alt={`Parça ${index + 1}`}
+                        className="w-full h-40 object-cover rounded"
+                      />
+                      <input
+                        type="text"
+                        value={part.description}
+                        onChange={(e) =>
+                          handlePartDescriptionChange(index, e.target.value)
+                        }
+                        className="mt-2 w-full border rounded py-1 px-2 text-sm"
+                        placeholder="Parça açıklaması"
+                      />
+                      <input
+                        type="file"
+                        onChange={(e) => handleChangePhoto("part", index, e)}
+                        className="mt-2 w-full text-sm"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleDeletePhoto("part", index)}
+                        className="absolute top-1 right-1 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center hover:bg-red-600 transition duration-200"
+                      >
+                        X
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              <div className="w-1/3 px-2 mb-4">
+                <div className="bg-gray-200 rounded-lg p-2 h-full flex flex-col justify-center items-center">
+                  <input
+                    type="file"
+                    onChange={(e) => handleAddPhoto("part", e)}
+                    className="hidden"
+                    id="addPartPhoto"
+                  />
+                  <label
+                    htmlFor="addPartPhoto"
+                    className="cursor-pointer text-center"
+                  >
+                    <svg
+                      className="mx-auto h-12 w-12 text-gray-400"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth="2"
+                        d="M12 6v6m0 0v6m0-6h6m-6 0H6"
+                      />
+                    </svg>
+                    <span className="mt-2 block text-sm font-medium text-gray-700">
+                      Yeni parça resmi ekle
+                    </span>
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="mb-8">
+            <h2 className="text-2xl font-bold mb-4 text-gray-800">Adımlar</h2>
+            {guide.steps &&
+              guide.steps.map((step, index) => (
+                <div
+                  key={index}
+                  className="mb-6 p-4 bg-gray-100 rounded-lg relative"
+                >
+                  <h3 className="font-bold mb-2 text-lg">Adım {index + 1}</h3>
+                  <img
+                    src={step.image}
+                    alt={`Adım ${index + 1}`}
+                    className="w-full h-60 object-cover rounded mb-2"
+                  />
+                  <textarea
+                    value={step.description}
+                    onChange={(e) =>
+                      handleStepChange(index, "description", e.target.value)
+                    }
+                    className="w-full h-24 border rounded py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="Adım açıklaması"
+                  />
+                  <div className="mt-2 flex items-center">
+                    <input
+                      type="file"
+                      onChange={(e) => handleChangePhoto("step", index, e)}
+                      className="flex-grow"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleDeletePhoto("step", index)}
+                      className="ml-2 bg-red-500 text-white rounded px-4 py-2 hover:bg-red-600 transition duration-200"
+                    >
+                      Adımı Sil
+                    </button>
+                  </div>
+                </div>
+              ))}
+
+            <div className="mt-4 p-4 bg-gray-100 rounded-lg">
+              <h3 className="font-bold mb-2 text-lg">Yeni Adım Ekle</h3>
+              <input
+                type="file"
+                onChange={handleAddStep}
+                className="w-full mb-2"
+                id="addNewStep"
+              />
+              <label
+                htmlFor="addNewStep"
+                className="block text-sm font-medium text-gray-700"
+              >
+                Yeni adım için fotoğraf yükle
+              </label>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between mt-8">
+            <button
+              type="submit"
+              className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-6 rounded-lg focus:outline-none focus:shadow-outline transition duration-200"
+            >
+              Güncelle
+            </button>
+            <button
+              onClick={handleCreatePDF}
+              className="bg-green-500 hover:bg-green-700 text-white font-bold py-2 px-6 rounded-lg focus:outline-none focus:shadow-outline transition duration-200"
+            >
+              PDF Oluştur
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate("/")}
+              className="bg-gray-500 hover:bg-gray-700 text-white font-bold py-2 px-6 rounded-lg focus:outline-none focus:shadow-outline transition duration-200"
+            >
+              İptal
+            </button>
+          </div>
+        </form>
+        {hasUnsavedChanges && (
+          <p className="text-red-500 mt-4 text-center">
+            Kaydedilmemiş değişiklikler var. Lütfen önce "Güncelle" butonuna
+            tıklayın.
+          </p>
+        )}
+      </div>
+
+      {isPDFVisible && (
+        <div className="mt-8 bg-white shadow-lg rounded-lg p-4">
+          <PDFViewer width="100%" height={600}>
+            <PDFDocument guide={guide} images={images} />
+          </PDFViewer>
+        </div>
+      )}
+    </div>
+  );
+  return (
+    <div className="container mx-auto p-4">
       <h1 className="text-3xl font-bold text-center mb-8">Rehber Düzenle</h1>
+
+      <div className="bg-white shadow-md rounded px-8 pt-6 pb-8 mb-4"></div>
       <form onSubmit={handleSubmit} className="max-w-2xl mx-auto">
         <div className="mb-4">
           <label
@@ -427,7 +778,7 @@ const GuideEditor = () => {
                   <img
                     src={photo}
                     alt={`Ürün ${index + 1}`}
-                    className="w-full h-auto"
+                    className="w-auto h-100"
                   />
                   <input
                     type="file"
@@ -552,9 +903,8 @@ const GuideEditor = () => {
             Güncelle
           </button>
           <button
-            type="button"
             onClick={handleCreatePDF}
-            className="bg-green-500 hover:bg-green-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline"
+            className="mt-4 bg-green-500 hover:bg-green-700 text-white font-bold py-2 px-4 rounded"
           >
             PDF Oluştur
           </button>
@@ -568,10 +918,10 @@ const GuideEditor = () => {
         </div>
       </form>
 
-      {isPDFVisible && guide && (
+      {isPDFVisible && (
         <div className="mt-8">
           <PDFViewer width="100%" height={600}>
-            <PDFDocument guide={guide} />
+            <PDFDocument guide={guide} images={images} />
           </PDFViewer>
         </div>
       )}
