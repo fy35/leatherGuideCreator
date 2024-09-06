@@ -1,12 +1,21 @@
-import "./App.css";
+import React from "react";
+import { BrowserRouter as Router, Route, Routes } from "react-router-dom";
+import HomePage from "./HomePage";
 import GuideCreator from "./GuideCreator";
+import GuideEditor from "./GuideEditor";
 
-function App() {
+const App = () => {
   return (
-    <div className="bg-slate-200">
-      <GuideCreator />
-    </div>
+    <Router>
+      <div className="app">
+        <Routes>
+          <Route path="/" element={<HomePage />} />
+          <Route path="/create" element={<GuideCreator />} />
+          <Route path="/edit/:guideId" element={<GuideEditor />} />
+        </Routes>
+      </div>
+    </Router>
   );
-}
+};
 
 export default App;

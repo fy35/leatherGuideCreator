@@ -9,6 +9,8 @@ import {
   Image,
   Font,
 } from "@react-pdf/renderer";
+import uploadPhoto from "./uploadPhoto";
+import uploadDetails from "./uploadDetails";
 
 Font.register({
   family: "Noto Sans",
@@ -118,20 +120,101 @@ export default function GuideCreator() {
   const [productPhotos, setProductPhotos] = useState([]);
   const [editingStepId, setEditingStepId] = useState(null);
 
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState({});
+
+  const handleSave = async () => {
+    setIsUploading(true);
+    setUploadProgress({});
+    try {
+      const productCodeUpperCase = productCode.toUpperCase();
+
+      // Ürün fotoğraflarını yükle
+      const uploadedProductPhotos = await Promise.all(
+        productPhotos.slice(0, 3).map((photo, index) =>
+          uploadPhoto(
+            photo.file,
+            `guides/${productCodeUpperCase}/product`,
+            `${productCodeUpperCase.toLowerCase()}_product_${index + 1}`,
+            (progress) =>
+              setUploadProgress((prev) => ({
+                ...prev,
+                [`product_${index}`]: progress,
+              }))
+          )
+        )
+      );
+
+      // Parça fotoğraflarını yükle
+      const uploadedPartImages = await Promise.all(
+        partImages.map(async (part, index) => {
+          const url = await uploadPhoto(
+            part.file,
+            `guides/${productCodeUpperCase}/part`,
+            `${productCodeUpperCase.toLowerCase()}_part_${index + 1}`,
+            (progress) =>
+              setUploadProgress((prev) => ({
+                ...prev,
+                [`part_${index}`]: progress,
+              }))
+          );
+          return { url, description: part.description };
+        })
+      );
+
+      // Adım fotoğraflarını yükle
+      const uploadedSteps = await Promise.all(
+        steps.map(async (step, index) => {
+          const imageUrl = await uploadPhoto(
+            step.image.file,
+            `guides/${productCodeUpperCase}/step`,
+            `${productCodeUpperCase.toLowerCase()}_step_${index + 1}`,
+            (progress) =>
+              setUploadProgress((prev) => ({
+                ...prev,
+                [`step_${index}`]: progress,
+              }))
+          );
+          return { ...step, image: imageUrl };
+        })
+      );
+
+      // Firestore'a veri kaydetme
+      const guideData = {
+        productCode: productCodeUpperCase,
+        productPhotos: uploadedProductPhotos,
+        partImages: uploadedPartImages,
+        steps: uploadedSteps,
+      };
+
+      const result = await uploadDetails(guideData);
+
+      if (result.success) {
+        console.log("Guide saved successfully with ID:", result.id);
+        alert("Kılavuz başarıyla kaydedildi!");
+      } else {
+        throw new Error(result.error);
+      }
+    } catch (error) {
+      console.error("Error saving guide:", error);
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
   const handleProductPhotoUpload = (e) => {
     const files = Array.from(e.target.files);
-    const imagePromises = files.slice(0, 3).map((file) => {
-      // En fazla 3 fotoğraf
-      return new Promise((resolve) => {
-        const reader = new FileReader();
-        reader.onload = (e) =>
-          resolve({ name: file.name, src: e.target.result, type: file.type });
-        reader.readAsDataURL(file);
-      });
-    });
+    const remainingSlots = 3 - productPhotos.length;
+    const filesToUpload = files.slice(0, remainingSlots);
 
-    Promise.all(imagePromises).then((newPhotos) => {
-      setProductPhotos(newPhotos);
+    const newPhotos = filesToUpload.map((file) => ({
+      file: file,
+      src: URL.createObjectURL(file),
+    }));
+
+    setProductPhotos((prevPhotos) => {
+      const updatedPhotos = [...prevPhotos, ...newPhotos].slice(0, 3);
+      return updatedPhotos;
     });
   };
 
@@ -145,7 +228,7 @@ export default function GuideCreator() {
       return new Promise((resolve) => {
         const reader = new FileReader();
         reader.onload = (e) =>
-          resolve({ name: file.name, src: e.target.result, type: file.type });
+          resolve({ name: file.name, src: e.target.result, file: file });
         reader.readAsDataURL(file);
       });
     });
@@ -180,13 +263,15 @@ export default function GuideCreator() {
   const saveStep = () => {
     if (currentStep.image && currentStep.description) {
       if (editingStepId !== null) {
-        // Eğer düzenleme modundaysak, mevcut adımı güncelle
         saveEditedStep();
       } else {
-        // Yeni adım ekleme
         setSteps((prevSteps) => [
           ...prevSteps,
-          { ...currentStep, id: Date.now() },
+          {
+            ...currentStep,
+            id: Date.now(),
+            image: { ...currentStep.image, file: currentStep.image.file },
+          },
         ]);
         setCurrentStep({ image: null, description: "" });
         setSelectedImage(null);
@@ -290,15 +375,13 @@ export default function GuideCreator() {
           id="productCode"
           value={productCode}
           onChange={(e) => setProductCode(e.target.value)}
-          className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+          className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
         />
       </div>
 
       <div className="flex flex-wrap -mx-2">
         <div className="w-full md:w-1/2 px-2 mb-4">
           <div className="mb-4 h-14 flex items-center">
-            {" "}
-            {/* Sabit yükseklik ve flex eklendi */}
             <input
               type="file"
               onChange={handleProductPhotoUpload}
@@ -306,12 +389,17 @@ export default function GuideCreator() {
               accept="image/*"
               className="hidden"
               id="productPhotoInput"
+              disabled={productPhotos.length >= 3}
             />
             <label
               htmlFor="productPhotoInput"
-              className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded cursor-pointer inline-block" // inline-block eklendi
+              className={`bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded cursor-pointer inline-block ${
+                productPhotos.length >= 3 ? "opacity-50 cursor-not-allowed" : ""
+              }`}
             >
-              Ürün Fotoğraflarını Yükle
+              {productPhotos.length >= 3
+                ? "Maksimum Fotoğrafa Ulaşıldı"
+                : "Ürün Fotoğraflarını Yükle"}
             </label>
           </div>
           <div className="mb-4">
@@ -473,7 +561,31 @@ export default function GuideCreator() {
           </div>
         ))}
       </div>
+      <button
+        onClick={handleSave}
+        disabled={isUploading}
+        className="mt-4 bg-green-500 hover:bg-green-700 text-white font-bold py-2 px-4 rounded"
+      >
+        {isUploading ? "Yükleniyor..." : "Kaydet"}
+      </button>
 
+      {isUploading && (
+        <div className="mt-4">
+          <p>Yükleme İlerlemesi:</p>
+          {Object.entries(uploadProgress).map(([key, value]) => (
+            <div key={key} className="flex items-center mt-2">
+              <span className="mr-2">{key}:</span>
+              <div className="w-full bg-gray-200 rounded-full h-2.5 dark:bg-gray-700">
+                <div
+                  className="bg-blue-600 h-2.5 rounded-full"
+                  style={{ width: `${value}%` }}
+                ></div>
+              </div>
+              <span className="ml-2">{value}%</span>
+            </div>
+          ))}
+        </div>
+      )}
       <button
         onClick={handleCreatePDF}
         className="mt-4 bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-4 rounded"
